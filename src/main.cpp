@@ -9,11 +9,30 @@ byte legoport = (byte)PoweredUpHubPort::A;
 std::string DuploAddress("6c:b2:fd:6a:c8:6e");
 std::string LegoAddress("90:84:2b:d0:9a:6d");
 
+const int8_t RXD0{16};
+const int8_t TXD0{17};
+
+bool getCommand(Stream &stream, std::string command)
+{
+  const size_t buflen{20};
+  char buffer[buflen] {0};
+  stream.readBytesUntil('\n', buffer, buflen);
+
+  if (buffer[0] = '$')
+  {
+    command = std::string(buffer);
+    return true;
+  }
+  
+  return false;
+}
+
 
 
 void setup() {
     // put your setup code here, to run once:
     Serial.begin(9600);
+    Serial2.begin(9600, SERIAL_8N1, RXD0, TXD0);
     Serial.println("Hello World");
     Serial.setTimeout(100);
     myHub.init(DuploAddress);
