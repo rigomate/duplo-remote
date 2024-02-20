@@ -1,30 +1,89 @@
 #include <Arduino.h>
 #include "Lpf2Hub.h"
+#include <sstream>
+#include <cstring>
+#include <HardwareSerial.h>
 
-Lpf2Hub myHub;
+Lpf2Hub myHubDuplo;
 Lpf2Hub myHubLego;
-byte motorPort = (byte)DuploTrainHubPort::MOTOR;
-byte legoport = (byte)PoweredUpHubPort::A;
 
 std::string DuploAddress("6c:b2:fd:6a:c8:6e");
 std::string LegoAddress("90:84:2b:d0:9a:6d");
 
-const int8_t RXD0{16};
-const int8_t TXD0{17};
 
-bool getCommand(Stream &stream, std::string command)
+struct Command{
+  std::string command;
+  int value;
+};
+
+//Define two Serial devices mapped to the two internal UARTs
+HardwareSerial MySerial0(0);
+
+const size_t buflen{100};
+char bufferstream[buflen];
+size_t bufpos{0};
+
+void readSerial(Stream &stream)
 {
-  const size_t buflen{20};
-  char buffer[buflen] {0};
-  stream.readBytesUntil('\n', buffer, buflen);
-
-  if (buffer[0] = '$')
+  if (stream.readBytes(&bufferstream[bufpos], 1))
   {
-    command = std::string(buffer);
-    return true;
+    stream.print(bufferstream[bufpos]);
+    if (bufferstream[bufpos] == '\r')
+    {
+      stream.print('\n');
+    }
+    bufpos++;
+  }
+
+  if (bufpos > buflen)
+  {
+    bufferstream[buflen - 1] = '\r';
+  }
+}
+
+/*return commands in the format: "$M1 100\r"
+First argument is command second argument i value
+*/
+bool getCommand(Command &command)
+{
+  bool retval {false};
+  bool containsEnd = (std::strchr(bufferstream, '\r') != nullptr);
+
+  if (containsEnd)
+  {
+    if (bufferstream[0] == '$')
+    {
+      std::string input(bufferstream);
+      std::string strcommand, strvalue;
+      std::istringstream iss(input);
+      iss >> strcommand >> strvalue;
+
+      int intValue = 0;
+      try {
+          // Convert the modified string to an integer
+          intValue = std::stoi(strvalue);
+          retval = true;
+          command.command = strcommand;
+          command.value = intValue;
+
+          // Output the result
+      } catch (const std::invalid_argument& e) {
+          std::string errorMessage = e.what();
+          Serial.printf("Invalid argument: %s\n", errorMessage.c_str());
+      } catch (const std::out_of_range& e) {
+        std::string errorMessage = e.what();
+        Serial.printf("Out of range: %s\n", errorMessage.c_str());
+      }
+
+      
+      memset(bufferstream, 0, buflen);
+      bufpos = 0;
+    }
+    memset(bufferstream, 0, buflen);
+    bufpos = 0;
   }
   
-  return false;
+  return retval;
 }
 
 
@@ -32,94 +91,106 @@ bool getCommand(Stream &stream, std::string command)
 void setup() {
     // put your setup code here, to run once:
     Serial.begin(9600);
-    Serial2.begin(9600, SERIAL_8N1, RXD0, TXD0);
     Serial.println("Hello World");
+    
+    // Configure MySerial0 on pins TX=D6 and RX=D7 (-1, -1 means use the default)
+    MySerial0.begin(9600, SERIAL_8N1, -1, -1);
+    MySerial0.print("MySerial0");
     Serial.setTimeout(100);
-    myHub.init(DuploAddress);
-    myHubLego.init(LegoAddress);
+    //myHubDuplo.init(DuploAddress, 100);
+    //myHubLego.init(LegoAddress, 100);
 }
 
 bool written = false;
 bool written2 = false;
 char buffer[100];
+
+unsigned long previousMillis = 0;  // will store last time an alarm was triggered
+const long interval = 2000;       // interval for the alarm in milliseconds (5 seconds)
+
+int connectCounter = 0;
 void loop() {
-  if (myHub.isConnecting()) {
+  readSerial(MySerial0);
+
+  unsigned long currentMillis = millis();  // get the current time
+
+  // Check if the specified interval has passed since the last alarm
+  if (currentMillis - previousMillis >= interval) {
+        if (connectCounter == 0)
+        {
+          if (!myHubDuplo.isConnected())
+          {
+            Serial.println("Initing duplo");
+            myHubDuplo.init(DuploAddress, 1);
+          }
+          connectCounter++;
+        }
+        else if(connectCounter == 1)
+        {
+          if (!myHubLego.isConnected())
+          {
+            Serial.println("Initing lego");
+            myHubLego.init(LegoAddress, 1);
+          }
+          connectCounter = 0;
+        }
+
+      // Update the last triggered time
+      previousMillis = currentMillis;
+  }
+
+
+
+  if (myHubDuplo.isConnecting()) {
     if (!written)
     {
-      Serial.println("duplo connecting");
+      Serial.println("Duplo train connecting");
       written = true;
     }
-    myHub.connectHub();
-    if (myHub.isConnected()) {
-      Serial.println("We are now connected to the HUB");
-      std::string address = myHub.getHubAddress();
+    myHubDuplo.connectHub();
+    if (myHubDuplo.isConnected()) {
+      Serial.println("We are now connected to the Duplo train");
+      std::string address = myHubDuplo.getHubAddress();
       Serial.println(address.c_str());
     } else {
-      Serial.println("We have failed to connect to the HUB");
+      Serial.println("We have failed to connect to the Duplo train");
     }
   }
   if (myHubLego.isConnecting()) {
-    if (!written)
+    if (!written2)
     {
-      Serial.println("duplo connecting");
-      written = true;
+      Serial.println("Lego train connecting");
+      written2 = true;
     }
     myHubLego.connectHub();
-    if (myHubLego.isConnected()) {
-      Serial.println("We are now connected to the HUB");
+    if (myHubLego.isConnected()) {      
+      Serial.println("We are now connected to the Lego train");
       std::string address = myHubLego.getHubAddress();
       Serial.println(address.c_str());
     } else {
-      Serial.println("We have failed to connect to the HUB");
+      Serial.println("We have failed to connect to the Lego train");
     }
   }
 
-  if (myHub.isConnected())
+  Command command;
+  if (getCommand(command))
   {
-    if (Serial.readBytes(buffer, 1))
+    if (myHubLego.isConnected())
     {
-      Serial.print(buffer[0]);
-      std::string command{buffer};
-
-      if (command == "w")
+      if (command.command == "$P0")
       {
-        myHub.setBasicMotorSpeed(motorPort, 50);
-        Serial.println("speed 50");
+        myHubLego.setBasicMotorSpeed(static_cast<byte>(PoweredUpHubPort::A), command.value);
       }
-      else if (command == "s")
+      if (command.command == "$P1")
       {
-        myHub.setBasicMotorSpeed(motorPort, -50);
-        Serial.println("speed -50");
-      }
-      else if (command == "e")
-      {
-        myHub.stopBasicMotor(motorPort);
-        Serial.println("stop");
+        myHubLego.setBasicMotorSpeed(static_cast<byte>(PoweredUpHubPort::B), command.value);
       }
     }
-  }
-
-  if (myHubLego.isConnected())
-  {
-    if (Serial.readBytes(buffer, 1))
+    if (myHubDuplo.isConnected())
     {
-      Serial.print(buffer[0]);
-      std::string command{buffer};
-
-      if (command == "t")
+      if (command.command == "$P2")
       {
-        myHubLego.setBasicMotorSpeed(legoport, 50);
-        Serial.println("speed 50");
-      }
-      else if (command == "g")
-      {
-        myHubLego.setBasicMotorSpeed(legoport, -50);
-        Serial.println("speed -50");
-      }
-      else if (command == "z")
-      {
-        myHubLego.stopBasicMotor(legoport);
-        Serial.println("stop");
+        myHubDuplo.setBasicMotorSpeed(static_cast<byte>(DuploTrainHubPort::MOTOR), command.value);
       }
     }
   }
